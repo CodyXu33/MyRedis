@@ -3,21 +3,78 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <assert.h>
 
 
-static void do_something(int confd){
-    char rbuf[64];
-    ssize_t n = read(confd,rbuf,sizeof(rbuf) - 1);
-    if (n < 0)
+const size_t k_max_msg = 4096;
+static int32_t read_full(int fd,char *buf,size_t n){
+    while (n > 0)
     {
-        perror("read() error");
-        return;
+       ssize_t rv = read(fd,buf,n);
+       if (rv <= 0)
+       {
+        return -1;
+       }
+       assert((size_t)rv <= n);
+       n = n - (size_t)rv;
+       buf = buf + rv;
+       
     }
-    printf("客户端：%s\n",rbuf);
-
-    char wbuf[] = "world";
-    write(confd,wbuf,strlen(wbuf));
     
+    return 0;
+}
+
+
+static int32_t write_full(int fd,char *buf,size_t n){
+    while (n > 0)
+    {
+       ssize_t rv = write(fd,buf,n);
+       if (rv == -1)
+       {
+        return -1;
+       }
+       assert((size_t)rv <= n);
+       n = n - (size_t)rv;
+       buf = buf + rv;
+       
+    }
+    
+    return 0;
+}
+
+
+static int32_t on_request(int confd){
+    char rbuf[4+k_max_msg] = {};
+
+    int32_t error = read_full(confd,rbuf,4);
+    if (error)
+    {
+        return error;
+    }
+
+    //检查请求体长度
+    int len;
+    memcpy(&len,rbuf,4);
+    if (len > k_max_msg)
+    {
+        perror("payload is too long\n");
+        return -1;
+    }
+    
+    error =  read_full(confd,&rbuf[4],len);
+    if(error){
+        perror("2.read_full error\n");
+        return -1;
+    }
+    
+    printf("客户端：%s\n",&rbuf[4]);
+
+    const char reply[] = "world";
+    char wbuf[4 + sizeof(reply)];
+    len = (uint32_t)strlen(reply);
+    memcpy(wbuf, &len, 4);
+    memcpy(&wbuf[4], reply, len);
+    return write_full(confd, wbuf, 4 + len);
 }
 
 int main(void){
@@ -68,7 +125,17 @@ int main(void){
         {
             continue;
         }
-        do_something(confd);
+
+        while (1)
+        {
+            int32_t error = on_request(confd);
+            if (error)
+            {
+               break;
+            }
+            
+        }
+        
         close(confd);
         
 
